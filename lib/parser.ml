@@ -59,26 +59,5 @@ let parse_module tokens =
         func :: aux tokens
     | hd :: _ -> failwith (Printf.sprintf "Unexpected token %s in module" (string_of_token hd)) in
     aux tokens
-(*
-and parse_function_def tokens = ns with
-    | Whitespace :: tl -> parse_function_def tl
-    | _ -> failwith "Unexpected token after fn"
-and parse_scope scope tokens = 
-    let parse_args tokens = 
-        let tokens = match_or_fail ParenL tokens in
-        match skip_whitespace tokens with
-    let parse_function_call tokens = match tokens with
-        | Identifier name :: tl -> let args, tokens = parse_args tl in
-            { name = name; args = args }, tokens
-        | _ -> failwith "Unexpected token in scope"
-    let tokens = match_or_fail CurlyL tokens in
-    match skip_whitespace tokens in
-        | CurlyR :: tl -> List.rev scope, tl
-        
-        | _ -> let statement, tokens = parse_statement tokens in
-            parse_scope (scope @ [statement]) tokens
-    let statement, tokens = parse_statement tokens in
-*)
-        
 
 let parse_file filename = parse_module (tokenize_file filename)

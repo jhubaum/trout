@@ -32,10 +32,13 @@ let tokenize_file filename =
     | ('a'..'z' | 'A'..'Z' | '_' | '0'..'1') as hd :: tl -> tokenize_identifier (hd :: chars) tl
     | list -> Identifier (stringify chars) :: tokenize_line list
     and tokenize_string chars tokens = match tokens with
-    (* TODO: handle string escaping *)
+    | '\\' :: tl -> tokenize_escape chars tl
     | '"' :: tl -> String (stringify chars) :: tokenize_line tl
     | hd :: tl -> tokenize_string (hd :: chars) tl
     | [] -> failwith "Found EOL or EOF before end of string"
+    and tokenize_escape chars tokens = match tokens with
+    | 'n' :: tl -> tokenize_string ('\n' :: chars) tl
+    | _ -> failwith "Unknown escape sequence"
     and tokenize_line line = match line with
     | [] -> [EOL]
     | ('a'..'z' | 'A'..'Z' | '_') as hd :: tl -> tokenize_identifier [hd] tl

@@ -1,4 +1,4 @@
 (executable
  (public_name trout)
  (name main)
- (libraries tokenizer parser))
+ (libraries tokenizer parser interpreter))

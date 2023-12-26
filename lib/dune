@@ -6,3 +6,8 @@
  (name parser)
  (modules parser)
  (libraries tokenizer))
+
+(library
+ (name interpreter)
+ (modules interpreter)
+ (libraries parser))
