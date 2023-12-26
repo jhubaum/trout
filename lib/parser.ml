@@ -6,9 +6,8 @@ type function_call = { name: string; args: value list; location: location }
 
 type statement = function_call
 
-type function_def = { name: string; scope: statement list; location: location }
+type function_def = { name: string; scope: statement list; location: location; params: string list}
 
-(* TODO: Rename *)
 type mod_statement = function_def
 type _mod = mod_statement list
 
@@ -32,6 +31,24 @@ let match_or_fail (expected : token) (tokens : located_token list) = match skip_
 
 let match_chain tokens chain = 
     List.fold_left (fun tokens expected -> match_or_fail expected tokens) tokens chain
+
+(* TODO: Refactor to make tokens hold a state, so I don't need to return all tokens
+   in all calls and can just use (Tokens.peek tokens) and (Tokens.pop tokens) *)
+let parse_list tokens parse_item =
+    let tokens = match_or_fail ParenL tokens in
+    let rec aux tokens = match skip_whitespace tokens with
+        | {token=Comma;_} :: tl -> let item, tokens = parse_item tl in
+            let items, tokens = aux tokens in
+            item :: items, tokens
+        | {token=ParenR;_} :: tl -> [], tl
+        | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+        | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
+    let parse tokens = match skip_whitespace tokens with
+        | {token=ParenR;_} :: tl -> [], tl
+        | tl -> let item, tokens = parse_item tl in
+            let items, tokens = aux tokens in
+            item :: items, tokens in
+    parse tokens
 
 let parse_scope tokens = 
     let tokens = match_or_fail CurlyL tokens in
@@ -57,8 +74,13 @@ let parse_scope tokens =
     aux [] tokens
 
 let parse_function tokens = match skip_whitespace tokens with
-    | {token=Identifier name;location=location} :: tl -> let scope, tokens = parse_scope (match_chain tl [ParenL; ParenR]) in
-        { name = name; scope = scope; location=location}, tokens
+    | {token=Identifier name;location=location} :: tl -> 
+            let params, tokens = parse_list tl (fun tokens -> match skip_whitespace tokens with
+                | {token=Identifier name;_} :: tl -> name, tl
+                | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+                | [] -> raise @@ InternalParserError UnexpectedEndOfFile) in
+            let scope, tokens = parse_scope tokens in
+        { name = name; scope = scope; location=location; params = params}, tokens
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
 

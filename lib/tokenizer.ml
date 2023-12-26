@@ -10,6 +10,8 @@ type token =
     | CurlyR 
     | Semicolon
     | Whitespace
+    | Comma
+    | Dot
 
 type located_token = {
     token : token;
@@ -26,6 +28,8 @@ let string_of_token token = match token with
     | CurlyR -> "CurlyR" 
     | Semicolon -> "Semicolon"
     | Whitespace -> "Whitespace"
+    | Comma -> "Comma"
+    | Dot -> "Dot"
 
 let string_of_located_token { token = token; location = loc } = 
     Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
@@ -80,6 +84,8 @@ let tokenize_line line_number line =
             | ')' -> tok ParenR
             | '{' -> tok CurlyL
             | '}' -> tok CurlyR
+            | ',' -> tok Comma
+            | '.' -> tok Dot
             | _ -> raise (InternalException (UnknownChar (String.make 1 c, loc)))
             end
         | ParseIdentifier (loc, chars) -> begin match c with
