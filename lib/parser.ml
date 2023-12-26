@@ -22,6 +22,9 @@ let match_or_fail expected tokens = match skip_whitespace tokens with
 let match_chain tokens chain = 
     List.fold_left (fun tokens expected -> match_or_fail expected tokens) tokens chain
 
+
+let describe_error = describe_token_error
+
 (* TODO: Switch to using result type and proper error. Add locations to tokens and make one error unexpected token *)
 let parse_scope tokens = 
     let tokens = match_or_fail CurlyL tokens in
@@ -62,4 +65,6 @@ let parse_module tokens =
 
 
 (* quick hack to ignore location. TODO: fix properly *)
-let parse_file filename = parse_module (List.map (fun { token=token; _} -> token) (tokenize_file filename))
+let parse_file filename = match tokenize_file filename with
+    | Ok tokens -> Ok (parse_module (List.map (fun { token=token; _} -> token) tokens))
+    | Error e -> Error e

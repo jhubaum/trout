@@ -34,5 +34,6 @@ let parse_args =
 
 let () =
   let args = parse_args in
-  let _mod = Parser.parse_file args.filename in
-  if args.unwrap then print_module _mod else Interpreter.run _mod;
+  match Parser.parse_file args.filename with
+  | Error e -> Parser.describe_error e
+  | Ok _mod -> if args.unwrap then print_module _mod else Interpreter.run _mod;

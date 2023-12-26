@@ -33,16 +33,25 @@ let string_of_token token = match token with
 let string_of_located_token { token = token; location = loc } = 
     Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
 
+
 let rec until cond tokens = match tokens with
 | [] -> []
 | hd :: tl when not (cond hd) -> until cond tl
 | tokens -> tokens
 
 
-(* TODO: Turn into result type? *)
-exception UnknownToken of char * location
-exception UnknownEscape of char * location
-exception UnfinishedString of location
+type token_error = 
+    | UnknownToken of string * location
+    | UnknownEscapedChar of string * location
+    | UnfinishedString of location
+
+
+let describe_token_error error = match error with
+    | UnknownToken (s, loc) -> Printf.printf "%d,%d: Unknown token '%s'\n" loc.line loc.column s
+    | UnknownEscapedChar (s, loc) -> Printf.printf "%d,%d: Unknown escaped character '%s'\n" loc.line loc.column s
+    | UnfinishedString loc -> Printf.printf "%d,%d: Unfinished string\n" loc.line loc.column
+
+exception InternalException of token_error
 
 type state = ParseIdentifier of (location * char list) 
     | ParseString of { loc: location; chars: char list; escape_next: bool} 
@@ -75,7 +84,7 @@ let tokenize_line line_number line =
             | ')' -> tok ParenR
             | '{' -> tok CurlyL
             | '}' -> tok CurlyR
-            | _ -> raise (UnknownToken (c, loc))
+            | _ -> raise (InternalException (UnknownToken (String.make 1 c, loc)))
             end
         | ParseIdentifier (loc, chars) -> begin match c with
             | c when is_from_identifier c -> state := ParseIdentifier (loc, c :: chars); None
@@ -85,7 +94,7 @@ let tokenize_line line_number line =
             let insert_escaped c = state := ParseString { loc = l; chars = c :: chars; escape_next = false }; None in
             begin match c with
             | 'n' -> insert_escaped '\n'
-            | c -> raise (UnknownEscape (c, loc))
+            | c -> raise (InternalException (UnknownEscapedChar (String.make 1 c, loc)))
             end
         | ParseString { loc = l; chars = chars; escape_next = false } -> begin match c with
             | '"' -> state := ParseToken; Some {location=l; token=String (to_string chars)}
@@ -106,7 +115,7 @@ let tokenize_line line_number line =
     List.rev begin match !state with 
         | ParseToken -> eol :: tokens
         | ParseIdentifier (loc, chars) -> eol :: (finish_identifier loc (to_string chars)) :: tokens
-        | ParseString { loc = l; _} -> raise (UnfinishedString l)
+        | ParseString { loc = l; _} -> raise (InternalException (UnfinishedString l))
     end
 
 let tokenize_file filename =
@@ -117,4 +126,7 @@ let tokenize_file filename =
         let line = tokenize_from_channel line_num channel in
         line @ (read_file (line_num+1) channel) with
     | End_of_file -> close_in channel; [] in
-    read_file 1 (open_in filename)
+    try 
+        Ok (read_file 1 (open_in filename))
+    with
+    | InternalException e -> Error e
