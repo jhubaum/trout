@@ -1,3 +1,10 @@
+fn hello_world() {
+}
+
+fn print_function_name(func) {
+    print("Function: ", meta(func).name);
+}
+
 fn main() {
-    print("Hello, world!\n");
+    print_function_name(hello_world);
 }
