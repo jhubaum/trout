@@ -1,3 +1,5 @@
+open Common;;
+
 type token = 
     Identifier of string 
     | String of string
@@ -8,11 +10,6 @@ type token =
     | CurlyR 
     | Semicolon
     | Whitespace
-
-type location = {
-    line : int;
-    column : int;
-}
 
 type located_token = {
     token : token;
@@ -33,7 +30,6 @@ let string_of_token token = match token with
 let string_of_located_token { token = token; location = loc } = 
     Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
 
-
 let rec until cond tokens = match tokens with
 | [] -> []
 | hd :: tl when not (cond hd) -> until cond tl
@@ -41,13 +37,13 @@ let rec until cond tokens = match tokens with
 
 
 type token_error = 
-    | UnknownToken of string * location
+    | UnknownChar of string * location
     | UnknownEscapedChar of string * location
     | UnfinishedString of location
 
 
 let describe_token_error error = match error with
-    | UnknownToken (s, loc) -> Printf.printf "%d,%d: Unknown token '%s'\n" loc.line loc.column s
+    | UnknownChar (s, loc) -> Printf.printf "%d,%d: Unknown char '%s'\n" loc.line loc.column s
     | UnknownEscapedChar (s, loc) -> Printf.printf "%d,%d: Unknown escaped character '%s'\n" loc.line loc.column s
     | UnfinishedString loc -> Printf.printf "%d,%d: Unfinished string\n" loc.line loc.column
 
@@ -84,7 +80,7 @@ let tokenize_line line_number line =
             | ')' -> tok ParenR
             | '{' -> tok CurlyL
             | '}' -> tok CurlyR
-            | _ -> raise (InternalException (UnknownToken (String.make 1 c, loc)))
+            | _ -> raise (InternalException (UnknownChar (String.make 1 c, loc)))
             end
         | ParseIdentifier (loc, chars) -> begin match c with
             | c when is_from_identifier c -> state := ParseIdentifier (loc, c :: chars); None

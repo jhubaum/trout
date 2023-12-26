@@ -1,11 +1,16 @@
 (library
+ (name common)
+ (modules common))
+
+(library
  (name tokenizer)
- (modules tokenizer))
+ (modules tokenizer)
+ (libraries common))
 
 (library
  (name parser)
  (modules parser)
- (libraries tokenizer))
+ (libraries tokenizer common))
 
 (library
  (name interpreter)
