@@ -9,9 +9,19 @@ type token =
     | Semicolon
     | Whitespace
 
+type location = {
+    line : int;
+    column : int;
+}
+
+type located_token = {
+    token : token;
+    location : location;
+}
+
 let string_of_token token = match token with
     | Identifier id -> Printf.sprintf "Identifier[%s]" id
-    | String str -> Printf.sprintf "String[\"%s\"]" str
+    | String str -> Printf.sprintf "String[\"%s\"]" (String.escaped str)
     | EOL -> "EOL" 
     | ParenL -> "ParenL" 
     | ParenR -> "ParenR" 
@@ -20,41 +30,91 @@ let string_of_token token = match token with
     | Semicolon -> "Semicolon"
     | Whitespace -> "Whitespace"
 
+let string_of_located_token { token = token; location = loc } = 
+    Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
+
 let rec until cond tokens = match tokens with
 | [] -> []
 | hd :: tl when not (cond hd) -> until cond tl
 | tokens -> tokens
 
+
+(* TODO: Turn into result type? *)
+exception UnknownToken of char * location
+exception UnknownEscape of char * location
+exception UnfinishedString of location
+
+type state = ParseIdentifier of (location * char list) 
+    | ParseString of { loc: location; chars: char list; escape_next: bool} 
+    | ParseToken
+
+
+let tokenize_line line_number line = 
+    let state = ref ParseToken in 
+    let to_string chars = String.init (List.length chars) (List.nth @@ List.rev chars) in
+    let finish_identifier loc name = state := ParseToken; { location=loc; token=(Identifier name)} in
+    let is_from_identifier c = match c with
+        | ('a'..'z' | 'A'..'Z' | '_' | '0'..'9') -> true
+        | _ -> false in
+    let peek_char c = match !state with
+        | ParseIdentifier (loc, chars) -> if not (is_from_identifier c)
+            then Some (finish_identifier loc (to_string chars)) 
+            else None
+        | _ -> None in
+    let consume_char i c = 
+        let i = i + 1 in
+        let loc = { line = line_number; column = i } in
+        let tok t = Some { token = t; location = loc } in
+        match !state with
+        | ParseToken -> begin match c with
+            | ('a'..'z' | 'A'..'Z' | '_') -> state := ParseIdentifier (loc, [c]); None
+            | '"' -> state := ParseString { loc=loc; chars=[]; escape_next=false }; None
+            | ' ' -> tok Whitespace
+            | ';' -> tok Semicolon
+            | '(' -> tok ParenL
+            | ')' -> tok ParenR
+            | '{' -> tok CurlyL
+            | '}' -> tok CurlyR
+            | _ -> raise (UnknownToken (c, loc))
+            end
+        | ParseIdentifier (loc, chars) -> begin match c with
+            | c when is_from_identifier c -> state := ParseIdentifier (loc, c :: chars); None
+            | _ -> assert false (* handled by peek_char *)
+            end
+        | ParseString { loc = l; chars = chars; escape_next = true } -> 
+            let insert_escaped c = state := ParseString { loc = l; chars = c :: chars; escape_next = false }; None in
+            begin match c with
+            | 'n' -> insert_escaped '\n'
+            | c -> raise (UnknownEscape (c, loc))
+            end
+        | ParseString { loc = l; chars = chars; escape_next = false } -> begin match c with
+            | '"' -> state := ParseToken; Some {location=l; token=String (to_string chars)}
+            | '\\' -> state := ParseString { loc = l; chars = chars; escape_next = true }; None
+            | c -> state := ParseString { loc = l; chars = c :: chars; escape_next = false }; None
+            end in
+    let match_char i c = 
+        let peeked = peek_char c in
+        let consumed = consume_char i c in
+        peeked, consumed in
+    let tokens = List.fold_left begin fun acc elems -> match elems with
+        | Some a, Some b -> b :: a :: acc
+        | Some a, None -> a :: acc
+        | None, Some b -> b :: acc
+        | None, None -> acc
+    end [] (List.mapi match_char line) in
+    let eol = { location = { line = line_number; column = List.length line }; token = EOL } in
+    List.rev begin match !state with 
+        | ParseToken -> eol :: tokens
+        | ParseIdentifier (loc, chars) -> eol :: (finish_identifier loc (to_string chars)) :: tokens
+        | ParseString { loc = l; _} -> raise (UnfinishedString l)
+    end
+
 let tokenize_file filename =
-    let stringify chars = let chars = List.rev chars in String.init (List.length chars) (List.nth chars) in
-    let rec tokenize_identifier chars tokens = match tokens with
-    | [] -> [Identifier (stringify chars); EOL]
-    | ('a'..'z' | 'A'..'Z' | '_' | '0'..'1') as hd :: tl -> tokenize_identifier (hd :: chars) tl
-    | list -> Identifier (stringify chars) :: tokenize_line list
-    and tokenize_string chars tokens = match tokens with
-    | '\\' :: tl -> tokenize_escape chars tl
-    | '"' :: tl -> String (stringify chars) :: tokenize_line tl
-    | hd :: tl -> tokenize_string (hd :: chars) tl
-    | [] -> failwith "Found EOL or EOF before end of string"
-    and tokenize_escape chars tokens = match tokens with
-    | 'n' :: tl -> tokenize_string ('\n' :: chars) tl
-    | _ -> failwith "Unknown escape sequence"
-    and tokenize_line line = match line with
-    | [] -> [EOL]
-    | ('a'..'z' | 'A'..'Z' | '_') as hd :: tl -> tokenize_identifier [hd] tl
-    | '"' :: tl -> tokenize_string [] tl
-    | ' ' :: tl -> Whitespace :: tokenize_line tl
-    | ';' :: tl -> Semicolon :: tokenize_line tl
-    | '(' :: tl -> ParenL :: tokenize_line tl
-    | ')' :: tl -> ParenR :: tokenize_line tl
-    | '{' :: tl -> CurlyL :: tokenize_line tl
-    | '}' :: tl -> CurlyR :: tokenize_line tl
-    | _ -> failwith "Unknown char" in
-    let tokenize_from_channel channel = 
+    let tokenize_from_channel line_num channel = 
         let line = input_line channel in
-        tokenize_line (List.init (String.length line) (String.get line)) in
-    let rec read_file channel = try 
-        let line = tokenize_from_channel channel in
-        line @ (read_file channel) with
+        tokenize_line line_num (List.init (String.length line) (String.get line)) in
+    let rec read_file line_num channel = try 
+        let line = tokenize_from_channel line_num channel in
+        line @ (read_file (line_num+1) channel) with
     | End_of_file -> close_in channel; [] in
-    read_file (open_in filename)
+    read_file 1 (open_in filename)

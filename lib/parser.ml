@@ -60,4 +60,6 @@ let parse_module tokens =
     | hd :: _ -> failwith (Printf.sprintf "Unexpected token %s in module" (string_of_token hd)) in
     aux tokens
 
-let parse_file filename = parse_module (tokenize_file filename)
+
+(* quick hack to ignore location. TODO: fix properly *)
+let parse_file filename = parse_module (List.map (fun { token=token; _} -> token) (tokenize_file filename))
