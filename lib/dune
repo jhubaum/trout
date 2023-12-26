@@ -1,2 +1,8 @@
 (library
- (name trout))
+ (name tokenizer)
+ (modules tokenizer))
+
+(library
+ (name parser)
+ (modules parser)
+ (libraries tokenizer))
