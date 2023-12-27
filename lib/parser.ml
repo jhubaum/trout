@@ -1,7 +1,12 @@
 open Common;;
 open Tokenizer;;
 
-type value = string
+type value = 
+    Literal of string | 
+    Variable of string |
+    Call of value * value list | 
+    MemberAccess of value * string
+
 type function_call = { name: string; args: value list; location: location }
 
 type statement = function_call
@@ -37,7 +42,7 @@ let match_chain tokens chain =
 let parse_list tokens parse_item =
     let tokens = match_or_fail ParenL tokens in
     let rec aux tokens = match skip_whitespace tokens with
-        | {token=Comma;_} :: tl -> let item, tokens = parse_item tl in
+        | {token=Comma;_} :: tl -> let item, tokens = parse_item (skip_whitespace tl) in
             let items, tokens = aux tokens in
             item :: items, tokens
         | {token=ParenR;_} :: tl -> [], tl
@@ -45,24 +50,27 @@ let parse_list tokens parse_item =
         | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
     let parse tokens = match skip_whitespace tokens with
         | {token=ParenR;_} :: tl -> [], tl
-        | tl -> let item, tokens = parse_item tl in
+        | tl -> let item, tokens = parse_item (skip_whitespace tl) in
             let items, tokens = aux tokens in
             item :: items, tokens in
     parse tokens
 
+let rec parse_value tokens = 
+    let rec follow_identifier value tokens = match skip_whitespace tokens with
+    | {token=Dot;_} :: {token=Identifier name;_} :: tl -> follow_identifier (MemberAccess (value, name)) tl
+    | {token=ParenL;_} as hd :: tl -> let args, tokens = parse_list (hd :: tl) parse_value in
+        follow_identifier (Call (value, args)) tokens
+    | _ -> value, tokens in
+    match skip_whitespace tokens with
+    | {token=String name; _} :: tl -> Literal name, tl
+    | {token=Identifier name; _} :: tl -> follow_identifier (Variable name) tl
+    | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+    | [] -> raise @@ InternalParserError UnexpectedEndOfFile
+
 let parse_scope tokens = 
     let tokens = match_or_fail CurlyL tokens in
-    let parse_arg_list tokens = 
-        let tokens = match_or_fail ParenL tokens in
-        let rec aux tokens = match skip_whitespace tokens with
-            | {token=ParenR ;_} :: tl -> [], tl
-            | {token=String name; _} :: tl -> let args, tokens = aux tl in
-                name :: args, tokens
-            | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
-            | [] -> raise @@ InternalParserError UnexpectedEndOfFile
-        in aux tokens in
-    let parse_function_call tokens = match skip_whitespace tokens with
-        | {token=Identifier name;location=location} :: tl -> let args, tokens = parse_arg_list tl in
+        let parse_function_call tokens = match skip_whitespace tokens with
+        | {token=Identifier name;location=location} :: tl -> let args, tokens = parse_list tl parse_value in
             { name = name; args = args; location = location }, tokens
         | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
         | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
