@@ -17,7 +17,7 @@ let print_module _mod =
     | Literal s -> "\"" ^ String.escaped s ^ "\""
     | Variable v -> v
     | Meta value -> "meta(" ^ (value_to_string value) ^ ")"
-    | Call (callee, args) -> (value_to_string callee) ^ (list_to_string value_to_string args)
+    | Call call -> call.name ^ (list_to_string value_to_string call.args)
     | MemberAccess (obj, member) -> (value_to_string obj) ^ "." ^ member in
   let args_list_to_string = list_to_string value_to_string in
   let print_scope indent scope = 

@@ -5,10 +5,9 @@ type value =
     Literal of string | 
     Variable of string |
     Meta of value |
-    Call of value * value list | 
+    Call of function_call | 
     MemberAccess of value * string
-
-type function_call = { name: string; args: value list; location: location }
+and function_call = { name: string; args: value list; location: location }
 
 type statement = function_call
 
@@ -19,7 +18,11 @@ type _mod = mod_statement list
 
 let skip_whitespace = until (fun t -> t.token != Whitespace && t.token != EOL)
 
-type parser_error = UnexpectedToken of located_token | TokenizerError of token_error | UnexpectedEndOfFile | InvalidMetaCall of location
+type parser_error = UnexpectedToken of located_token |
+    TokenizerError of token_error |
+    UnexpectedEndOfFile |
+    InvalidMetaCall of location |
+    InvalidFunctionCall of location
 
 exception InternalParserError of parser_error
 
@@ -29,6 +32,7 @@ let describe_error error = match error with
         Printf.printf "%s: Unexpected token %s\n" (string_of_location location) (string_of_token token)
     | UnexpectedEndOfFile -> Printf.printf "Unexpected end of file\n"
     | InvalidMetaCall l -> Printf.printf "%s: Invalid call to meta function" (string_of_location l)
+    | InvalidFunctionCall l -> Printf.printf "%s: Called object is not callable" (string_of_location l)
 
 let match_or_fail (expected : token) (tokens : located_token list) = match skip_whitespace tokens with
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
@@ -58,10 +62,15 @@ let parse_list tokens parse_item =
     parse tokens
 
 let rec parse_value tokens = 
-    let rec follow_identifier value tokens = match skip_whitespace tokens with
-    | {token=Dot;_} :: {token=Identifier name;_} :: tl -> follow_identifier (MemberAccess (value, name)) tl
-    | {token=ParenL;_} as hd :: tl -> let args, tokens = parse_list (hd :: tl) parse_value in
-        follow_identifier (Call (value, args)) tokens
+    let rec follow_identifier location value tokens = match skip_whitespace tokens with
+    | {token=Dot;_} :: {token=Identifier name;_} :: tl -> follow_identifier location (MemberAccess (value, name)) tl
+    | {token=ParenL;_} as hd :: tl -> 
+        begin match value with
+        | Variable name -> 
+            let args, tokens = parse_list (hd :: tl) parse_value in
+            follow_identifier location (Call { name = name; args = args; location = location}) tokens
+        | _ -> raise @@ InternalParserError (InvalidFunctionCall location)
+        end
     | _ -> value, tokens in
     match skip_whitespace tokens with
     | {token=String name; _} :: tl -> Literal name, tl
@@ -70,8 +79,8 @@ let rec parse_value tokens =
         if List.length args <> 1 then
             raise @@ InternalParserError (InvalidMetaCall location)
         else
-            follow_identifier (Meta (List.hd args)) tokens
-    | {token=Identifier name; _} :: tl -> follow_identifier (Variable name) tl
+            follow_identifier location (Meta (List.hd args)) tokens
+    | {token=Identifier name; location} :: tl -> follow_identifier location (Variable name) tl
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
 
