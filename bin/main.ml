@@ -16,6 +16,7 @@ let print_module _mod =
   let rec value_to_string value = match value with
     | Literal s -> "\"" ^ String.escaped s ^ "\""
     | Variable v -> v
+    | Meta value -> "meta(" ^ (value_to_string value) ^ ")"
     | Call (callee, args) -> (value_to_string callee) ^ (list_to_string value_to_string args)
     | MemberAccess (obj, member) -> (value_to_string obj) ^ "." ^ member in
   let args_list_to_string = list_to_string value_to_string in

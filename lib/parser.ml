@@ -4,6 +4,7 @@ open Tokenizer;;
 type value = 
     Literal of string | 
     Variable of string |
+    Meta of value |
     Call of value * value list | 
     MemberAccess of value * string
 
@@ -18,7 +19,7 @@ type _mod = mod_statement list
 
 let skip_whitespace = until (fun t -> t.token != Whitespace && t.token != EOL)
 
-type parser_error = UnexpectedToken of located_token | TokenizerError of token_error | UnexpectedEndOfFile
+type parser_error = UnexpectedToken of located_token | TokenizerError of token_error | UnexpectedEndOfFile | InvalidMetaCall of location
 
 exception InternalParserError of parser_error
 
@@ -27,6 +28,7 @@ let describe_error error = match error with
     | UnexpectedToken { token = token; location = location } -> 
         Printf.printf "%s: Unexpected token %s\n" (string_of_location location) (string_of_token token)
     | UnexpectedEndOfFile -> Printf.printf "Unexpected end of file\n"
+    | InvalidMetaCall l -> Printf.printf "%s: Invalid call to meta function" (string_of_location l)
 
 let match_or_fail (expected : token) (tokens : located_token list) = match skip_whitespace tokens with
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
@@ -63,6 +65,12 @@ let rec parse_value tokens =
     | _ -> value, tokens in
     match skip_whitespace tokens with
     | {token=String name; _} :: tl -> Literal name, tl
+    | {token=Identifier "meta"; location} :: tl ->
+        let args, tokens = parse_list tl parse_value in
+        if List.length args <> 1 then
+            raise @@ InternalParserError (InvalidMetaCall location)
+        else
+            follow_identifier (Meta (List.hd args)) tokens
     | {token=Identifier name; _} :: tl -> follow_identifier (Variable name) tl
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
