@@ -4,10 +4,13 @@ open Tokenizer;;
 type value = 
     Literal of string | 
     Variable of string |
-    Meta of value |
+    Meta of string |
     Call of function_call | 
+    (* TODO: Implement parsing for this *)
+    StructInit of struct_init |
     MemberAccess of value * string
 and function_call = { name: string; args: value list; location: location }
+and struct_init = { struct_name: string; members: (string * value) list; }
 
 type statement = function_call
 
@@ -61,6 +64,11 @@ let parse_list tokens parse_item =
             item :: items, tokens in
     parse tokens
 
+let parse_identifier tokens = match skip_whitespace tokens with
+    | { token=Identifier name;_} :: tl -> name, tl
+    | token :: _ -> raise @@ InternalParserError (UnexpectedToken token)
+    | [] -> raise @@ InternalParserError UnexpectedEndOfFile
+
 let rec parse_value tokens = 
     let rec follow_identifier location value tokens = match skip_whitespace tokens with
     | {token=Dot;_} :: {token=Identifier name;_} :: tl -> follow_identifier location (MemberAccess (value, name)) tl
@@ -75,7 +83,7 @@ let rec parse_value tokens =
     match skip_whitespace tokens with
     | {token=String name; _} :: tl -> Literal name, tl
     | {token=Identifier "meta"; location} :: tl ->
-        let args, tokens = parse_list tl parse_value in
+        let args, tokens = parse_list tl parse_identifier in
         if List.length args <> 1 then
             raise @@ InternalParserError (InvalidMetaCall location)
         else

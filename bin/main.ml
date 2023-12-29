@@ -16,9 +16,10 @@ let print_module _mod =
   let rec value_to_string value = match value with
     | Literal s -> "\"" ^ String.escaped s ^ "\""
     | Variable v -> v
-    | Meta value -> "meta(" ^ (value_to_string value) ^ ")"
+    | Meta value -> "meta(" ^ value ^ ")"
     | Call call -> call.name ^ (list_to_string value_to_string call.args)
-    | MemberAccess (obj, member) -> (value_to_string obj) ^ "." ^ member in
+    | MemberAccess (obj, member) -> (value_to_string obj) ^ "." ^ member
+    | StructInit s -> s.struct_name ^ "{ " ^ (list_to_string (fun (name, value) -> name ^ ": " ^ (value_to_string value) ^ "; ") s.members) ^ "}" in
   let args_list_to_string = list_to_string value_to_string in
   let print_scope indent scope = 
     let print_statement (statement : statement) = 
@@ -47,4 +48,4 @@ let () =
   let args = parse_args in
   match Parser.parse_file args.filename with
   | Error e -> Parser.describe_error e
-  | Ok _mod -> if args.unwrap then print_module _mod else Interpreter.run _mod;
+  | Ok _mod -> if args.unwrap then print_module (Interpreter.unwrap_meta_calls _mod) else Interpreter.run _mod;
