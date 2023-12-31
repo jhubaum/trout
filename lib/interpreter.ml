@@ -64,16 +64,19 @@ let find_metacall_instantiations _mod desc =
     List.iter (fun (mod_statement : Parser.mod_statement) -> List.iter iter_call mod_statement.scope) _mod;
     desc, List.map (fun inst -> List.map find_definition inst) !instantiations
 
-(* TODO: How can I combine this with `replace_call` in `instantiate_if_matching`?*)
-let meta_call_instantiation (call : Parser.function_call) (desc : metacall_description) =
-    let param_args = 
-        let aux value = match value with
-        | Parser.Variable name -> name
-        | _ -> failwith "Unsupported meta call in `meta_call_instantiation`" in
-        List.map (fun i -> aux @@ List.nth call.args i) desc.meta_param_indices in
-    { call with name = desc.function_name ^ "__" ^ (String.concat "_" param_args) }
+let meta_call_transform nth_to_string args (desc : metacall_description) =
+    let name_params = List.map nth_to_string desc.meta_param_indices in
+    let filtered_args = List.filteri (fun i _ -> List.for_all ((<>) i) desc.meta_param_indices) args in
+    desc.function_name ^ "__" ^ (String.concat "_" name_params), filtered_args
 
 let instantiate_if_matching metacall_desc instantiations _mod (func : Parser.function_def) =
+    let nth_arg_name (instantiations : (string * Parser.function_def) list) i = 
+        let name = List.nth func.params i in
+        let rec aux (instantiations : (string * Parser.function_def) list) = match instantiations with
+        | [] -> failwith "Logic error in `instantiate_if_matching:arg_name_for_index`"
+        | hd :: _ when (fst hd) = name -> (snd hd).name
+        | _ :: tl -> aux tl in
+        aux instantiations in
     let instantiate instantiation =
         let def_to_struct_value (def : Parser.function_def) = 
             Parser.StructInit { struct_name = "Function"; members = ["name", Parser.Literal def.name] } in
@@ -91,10 +94,9 @@ let instantiate_if_matching metacall_desc instantiations _mod (func : Parser.fun
             | Parser.Call call -> Parser.Call { call with args = List.map replace_value call.args }
             | value -> value in
         let replace_call (call : Parser.function_call) = { call with args = List.map replace_value call.args } in
+        let name, params = meta_call_transform (nth_arg_name meta_param) func.params metacall_desc in
         { 
-            func with
-            name = func.name ^ "__" ^ (String.concat "_" (List.map (fun (_, (def : Parser.function_def)) -> def.name) meta_param)); 
-            scope = List.map replace_call func.scope;
+            func with name = name; params = params; scope = List.map replace_call func.scope;
         } in
     if func.name = metacall_desc.function_name then
         List.map instantiate instantiations
@@ -102,10 +104,14 @@ let instantiate_if_matching metacall_desc instantiations _mod (func : Parser.fun
         [func]
 
 let replace_meta_calls_transformer (meta_calls : metacall_description list) (value : Parser.value) =
+    let nth_name (call : Parser.function_call) i = match List.nth call.args i with
+    | Parser.Variable name -> name
+    | _ -> failwith "Unsupported arg value in `replace_meta_calls_transformer`" in
     let matches meta_call (call : Parser.function_call) = meta_call.function_name = call.name in
     let rec aux meta_calls call = match meta_calls with
     | [] -> value
-    | hd :: _ when matches hd call -> Parser.Call (meta_call_instantiation call hd)
+    | hd :: _ when matches hd call -> let name, args = meta_call_transform (nth_name call) call.args hd in
+        Parser.Call { call with name = name; args=args }
     | _ :: tl -> aux tl call in
     match value with
     | Parser.Call call -> aux meta_calls call
