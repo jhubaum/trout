@@ -117,6 +117,15 @@ let replace_meta_calls_transformer (meta_calls : metacall_description list) (val
     | Parser.Call call -> aux meta_calls call
     | value -> value
 
+let simplify_struct_access_transformer (value : Parser.value) =
+    let rec aux members name = match members with
+    | [] -> failwith "No such named member in `simplify_struct_access_transformer`"
+    | (n, value) :: _ when n=name -> value
+    | _ :: tl -> aux tl name in
+    match value with
+    | Parser.MemberAccess (Parser.StructInit s, name) -> aux s.members name
+    | value -> value
+
 let unwrap_meta_calls (_mod : Parser._mod) =
     let meta_calls = find_metacall_descriptions _mod in
     let with_instantiations = List.map (find_metacall_instantiations _mod) meta_calls in
@@ -125,7 +134,13 @@ let unwrap_meta_calls (_mod : Parser._mod) =
     let rec aux (_mod : Parser._mod) instantiations = match instantiations with
     | [] -> _mod
     | (desc, instantiations) :: tl -> aux (insert_instantiation _mod desc instantiations) tl in
-    transform_value (replace_meta_calls_transformer meta_calls) (aux _mod with_instantiations)
+    let rec transformations _mod transformers = match transformers with
+    | [] -> _mod
+    | hd :: tl -> transformations (transform_value hd _mod) tl in
+    transformations (aux _mod with_instantiations) [
+        (replace_meta_calls_transformer meta_calls);
+        simplify_struct_access_transformer
+    ]
 
 let eval_value value = match value with
     | Parser.Literal s -> s
