@@ -1,10 +1,16 @@
-fn hello_world() {
+fn print_elem(i : int) {
+    print("Integer: ", i);
 }
 
-fn print_function_name(func) {
-    print("Function: ", meta(func).name);
+fn print_elem(s : string) {
+    print("String: ", s);
+}
+
+fn helper(elem) {
+    print_elem(elem);
 }
 
 fn main() {
-    print_function_name(hello_world);
+    helper(3);
+    helper("test");
 }
