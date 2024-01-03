@@ -14,7 +14,8 @@ let print_module _mod =
     | x::xs -> (elem_to_string x) ^ ", " ^ (aux xs) in
     "(" ^ (aux list) ^ ")" in
   let rec value_to_string value = match value with
-    | Literal s -> "\"" ^ String.escaped s ^ "\""
+    | StringLiteral s -> "\"" ^ String.escaped s ^ "\""
+    | IntegerLiteral i -> string_of_int i
     | Variable v -> v
     | Meta value -> "meta(" ^ value ^ ")"
     | Call call -> call.name ^ (list_to_string value_to_string call.args)
@@ -25,8 +26,14 @@ let print_module _mod =
     let print_statement (statement : statement) = 
       print_with_indent indent [statement.name; args_list_to_string statement.args; ";"] in
     List.iter print_statement scope in
+  let param_to_string (param : Parser.param_def) = match param.type_constraint with
+  | Some c -> param.param_name ^ ": " ^ begin match c with
+    | String -> "string"
+    | Integer -> "int"
+    end
+  | None -> param.param_name in
   let print_function indent func = 
-    print_with_indent indent ["fn "; func.name; list_to_string (fun s -> s) func.params; " {"];
+    print_with_indent indent ["fn "; func.name; list_to_string param_to_string func.params; " {"];
     print_scope (indent+4) func.scope;
     print_with_indent indent ["}\n"] in
   List.iter (print_function 0) _mod

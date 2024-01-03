@@ -3,6 +3,7 @@ open Common;;
 type token = 
     Identifier of string 
     | String of string
+    | Integer of int
     | EOL 
     | ParenL 
     | ParenR 
@@ -12,6 +13,7 @@ type token =
     | Whitespace
     | Comma
     | Dot
+    | Colon
 
 type located_token = {
     token : token;
@@ -21,6 +23,7 @@ type located_token = {
 let string_of_token token = match token with
     | Identifier id -> Printf.sprintf "Identifier[%s]" id
     | String str -> Printf.sprintf "String[\"%s\"]" (String.escaped str)
+    | Integer n -> Printf.sprintf "Integer[%d]" n
     | EOL -> "EOL" 
     | ParenL -> "ParenL" 
     | ParenR -> "ParenR" 
@@ -30,6 +33,7 @@ let string_of_token token = match token with
     | Whitespace -> "Whitespace"
     | Comma -> "Comma"
     | Dot -> "Dot"
+    | Colon -> "Colon"
 
 let string_of_located_token { token = token; location = loc } = 
     Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
@@ -56,9 +60,10 @@ exception InternalException of token_error
 type state = ParseIdentifier of (location * char list) 
     | ParseString of { loc: location; chars: char list; escape_next: bool} 
     | ParseToken
-
+    | ParseNumber of location * int
 
 let tokenize_line line_number line = 
+    let to_digit c = (int_of_char c) - (int_of_char '0') in
     let state = ref ParseToken in 
     let to_string chars = String.init (List.length chars) (List.nth @@ List.rev chars) in
     let finish_identifier loc name = state := ParseToken; { location=loc; token=(Identifier name)} in
@@ -69,6 +74,10 @@ let tokenize_line line_number line =
         | ParseIdentifier (loc, chars) -> if not (is_from_identifier c)
             then Some (finish_identifier loc (to_string chars)) 
             else None
+        | ParseNumber (loc, n) -> begin match c with
+            | '0'..'9' -> None
+            | _ -> state := ParseToken; Some { location=loc; token=(Integer n)}
+            end
         | _ -> None in
     let consume_char i c = 
         let i = i + 1 in
@@ -78,8 +87,10 @@ let tokenize_line line_number line =
         | ParseToken -> begin match c with
             | ('a'..'z' | 'A'..'Z' | '_') -> state := ParseIdentifier (loc, [c]); None
             | '"' -> state := ParseString { loc=loc; chars=[]; escape_next=false }; None
+            | '0'..'9' -> state := ParseNumber (loc, to_digit c); None
             | ' ' -> tok Whitespace
             | ';' -> tok Semicolon
+            | ':' -> tok Colon
             | '(' -> tok ParenL
             | ')' -> tok ParenR
             | '{' -> tok CurlyL
@@ -91,6 +102,10 @@ let tokenize_line line_number line =
         | ParseIdentifier (loc, chars) -> begin match c with
             | c when is_from_identifier c -> state := ParseIdentifier (loc, c :: chars); None
             | _ -> assert false (* handled by peek_char *)
+            end
+        | ParseNumber (loc, n) -> begin match c with
+            | '0'..'9' -> state := ParseNumber (loc, n * 10 + (to_digit c)); None
+            | _ -> assert false
             end
         | ParseString { loc = l; chars = chars; escape_next = true } -> 
             let insert_escaped c = state := ParseString { loc = l; chars = c :: chars; escape_next = false }; None in
@@ -117,6 +132,7 @@ let tokenize_line line_number line =
     List.rev begin match !state with 
         | ParseToken -> eol :: tokens
         | ParseIdentifier (loc, chars) -> eol :: (finish_identifier loc (to_string chars)) :: tokens
+        | ParseNumber (loc, n) -> eol :: { location = loc; token = Integer n } :: tokens
         | ParseString { loc = l; _} -> raise (InternalException (UnfinishedString l))
     end
 

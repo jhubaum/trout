@@ -30,11 +30,11 @@ let find_metacall_descriptions (_mod : Parser._mod) =
         let aux2 margs (call : Parser.function_call) = List.fold_left (fun acc i -> (aux i) @ acc) margs call.args in
         List.fold_left aux2 [] statement.scope in
     let find_param_index (func : Parser.function_def) param_name =
-        let rec aux params index = match params with
+        let rec aux (params : Parser.param_def list) index = match params with
         (* TODO: One possibility for this failure is a meta call on a global object. Handle this *)
         (* TODO: Add location to this error and replace exception with result type *)
         | [] -> raise @@ InterpreterError UnknownFunction
-        | hd :: _ when hd = param_name -> index
+        | hd :: _ when hd.param_name = param_name -> index
         | _ :: tl -> aux tl (index+1) in
         aux func.params 0 in
     let aux (statement : Parser.mod_statement) = match meta_args statement with
@@ -70,21 +70,21 @@ let meta_call_transform nth_to_string args (desc : metacall_description) =
     desc.function_name ^ "__" ^ (String.concat "_" name_params), filtered_args
 
 let instantiate_if_matching metacall_desc instantiations _mod (func : Parser.function_def) =
-    let nth_arg_name (instantiations : (string * Parser.function_def) list) i = 
-        let name = List.nth func.params i in
-        let rec aux (instantiations : (string * Parser.function_def) list) = match instantiations with
+    let nth_arg_name (instantiations : (Parser.param_def * Parser.function_def) list) i = 
+        let (param : Parser.param_def) = List.nth func.params i in
+        let rec aux (instantiations : (Parser.param_def * Parser.function_def) list) = match instantiations with
         | [] -> failwith "Logic error in `instantiate_if_matching:arg_name_for_index`"
-        | hd :: _ when (fst hd) = name -> (snd hd).name
+        | hd :: _ when (fst hd).param_name = param.param_name -> (snd hd).name
         | _ :: tl -> aux tl in
         aux instantiations in
     let instantiate instantiation =
         let def_to_struct_value (def : Parser.function_def) = 
-            Parser.StructInit { struct_name = "Function"; members = ["name", Parser.Literal def.name] } in
+            Parser.StructInit { struct_name = "Function"; members = ["name", Parser.StringLiteral def.name] } in
         let meta_param = List.combine (List.map (List.nth func.params) metacall_desc.meta_param_indices) instantiation in
-        let find_and_replace name =
+        let find_and_replace (name : string) =
             let rec aux params = match params with
             | [] -> failwith "Logic error in instantiate_if_matching"
-            | hd :: _ when (fst hd) = name -> snd hd
+            | (hd : Parser.param_def * Parser.function_def) :: _ when (fst hd).param_name = name -> snd hd
             | _ :: tl -> aux tl in
             aux meta_param in
         let rec replace_value value = match value with
@@ -143,7 +143,7 @@ let unwrap_meta_calls (_mod : Parser._mod) =
     ]
 
 let eval_value value = match value with
-    | Parser.Literal s -> s
+    | Parser.StringLiteral s -> s
     | _ -> failwith "Not implemented"
 
 let rec eval_func (_mod : Parser._mod) name args =  match name with

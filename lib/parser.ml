@@ -2,7 +2,8 @@ open Common;;
 open Tokenizer;;
 
 type value = 
-    Literal of string | 
+    StringLiteral of string | 
+    IntegerLiteral of int |
     Variable of string |
     Meta of string |
     Call of function_call | 
@@ -14,7 +15,9 @@ and struct_init = { struct_name: string; members: (string * value) list; }
 
 type statement = function_call
 
-type function_def = { name: string; scope: statement list; location: location; params: string list}
+type type_constraint = String | Integer
+type param_def = { param_name: string; type_constraint: type_constraint option }
+type function_def = { name: string; scope: statement list; location: location; params: param_def list}
 
 type mod_statement = function_def
 type _mod = mod_statement list
@@ -81,7 +84,8 @@ let rec parse_value tokens =
         end
     | _ -> value, tokens in
     match skip_whitespace tokens with
-    | {token=String name; _} :: tl -> Literal name, tl
+    | {token=String name; _} :: tl -> StringLiteral name, tl
+    | {token=Integer i; _} :: tl -> IntegerLiteral i, tl
     | {token=Identifier "meta"; location} :: tl ->
         let args, tokens = parse_list tl parse_identifier in
         if List.length args <> 1 then
@@ -91,6 +95,19 @@ let rec parse_value tokens =
     | {token=Identifier name; location} :: tl -> follow_identifier location (Variable name) tl
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
+
+let parse_param tokens = 
+    let parse_type_constraint tokens = match skip_whitespace tokens with
+    | {token=Identifier "int";_} :: tl -> Integer, tl
+    | {token=Identifier "string";_} :: tl -> String, tl
+    | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+    | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
+    let name, tokens = parse_identifier tokens in
+    match skip_whitespace tokens with
+    | {token=Colon;_} :: tl -> 
+        let type_constraint, tokens = parse_type_constraint tl in
+        { param_name=name; type_constraint = Some type_constraint}, tokens
+    | _ -> { param_name=name; type_constraint = None }, tokens
 
 let parse_scope tokens = 
     let tokens = match_or_fail CurlyL tokens in
@@ -108,10 +125,7 @@ let parse_scope tokens =
 
 let parse_function tokens = match skip_whitespace tokens with
     | {token=Identifier name;location=location} :: tl -> 
-            let params, tokens = parse_list tl (fun tokens -> match skip_whitespace tokens with
-                | {token=Identifier name;_} :: tl -> name, tl
-                | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
-                | [] -> raise @@ InternalParserError UnexpectedEndOfFile) in
+            let params, tokens = parse_list tl parse_param in
             let scope, tokens = parse_scope tokens in
         { name = name; scope = scope; location=location; params = params}, tokens
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
