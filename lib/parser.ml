@@ -22,6 +22,11 @@ type function_def = { name: string; scope: statement list; location: location; p
 type mod_statement = function_def
 type _mod = mod_statement list
 
+let rec until cond tokens = match tokens with
+| [] -> []
+| hd :: tl when not (cond hd) -> until cond tl
+| tokens -> tokens
+
 let skip_whitespace = until (fun t -> t.token != Whitespace && t.token != EOL)
 
 type parser_error = UnexpectedToken of located_token |
