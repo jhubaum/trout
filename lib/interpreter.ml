@@ -1,146 +1,103 @@
-type error = UnknownFunction
+type error = UnknownFunction of Parser.function_call |
+             ArgumentCountMismatch of (Parser.function_call * Parser.function_def) |
+             ArgumentTypeMismatch of (int * Parser.function_call * Parser.function_def) |
+             UnknownIdentifier of (string * Common.location)
 
-exception InterpreterError of error
+let describe_error _ = 
+    (* TODO: Implement *)
+    print_endline "An error occurred"
 
-type metacall_description = { function_name: string; meta_param_indices: int list }
+type type_name = string
 
-let transform_value transformer (_mod : Parser._mod) = 
-    let rec transform value = match value with
-    | Parser.Call call -> let args = List.map transform call.args in 
-        transformer @@ Parser.Call { call with args = args }
-    | Parser.MemberAccess (value, name) -> transformer @@ Parser.MemberAccess (transformer value, name)
-    | Parser.StructInit s -> let members = List.map (fun (name, value) -> name, transformer value) s.members in
-        transformer @@ Parser.StructInit { s with members = members }
-    | value -> transformer value in
-    let transform_statement (statement : Parser.statement) = 
-        (* A hack to make the transformer work on statements in a function. TODO: Figure out how to do this properly *)
-        match transform @@ Parser.Call statement with
-        | Parser.Call call -> call
-        | _ -> failwith "Logic error in transform_value. Returned value isn't a call" in
-    let transform_function (func : Parser.function_def) = { func with scope = List.map transform_statement func.scope } in
-    List.map transform_function _mod
+(* a function call that calls an existing function with valid arguments *)
+type checked_function_call = {
+    function_index: int; (* refers to the function_def in the Parser._mod *)
+    args: (Parser.value * type_name) list;
+}
 
-let find_metacall_descriptions (_mod : Parser._mod) = 
-    let meta_args (statement : Parser.mod_statement) = 
-        let rec aux (value : Parser.value) = match value with
-        | Parser.Meta value -> [value]
-        | Parser.Call call -> List.flatten (List.map aux call.args)
-        | Parser.MemberAccess (value, _) -> aux value
-        | _ -> [] in
-        let aux2 margs (call : Parser.function_call) = List.fold_left (fun acc i -> (aux i) @ acc) margs call.args in
-        List.fold_left aux2 [] statement.scope in
-    let find_param_index (func : Parser.function_def) param_name =
-        let rec aux (params : Parser.param_def list) index = match params with
-        (* TODO: One possibility for this failure is a meta call on a global object. Handle this *)
-        (* TODO: Add location to this error and replace exception with result type *)
-        | [] -> raise @@ InterpreterError UnknownFunction
-        | hd :: _ when hd.param_name = param_name -> index
-        | _ :: tl -> aux tl (index+1) in
-        aux func.params 0 in
-    let aux (statement : Parser.mod_statement) = match meta_args statement with
-    | [] -> None
-    | meta_params -> Some { function_name = statement.name; meta_param_indices = List.map (find_param_index statement) meta_params } in
-    List.filter_map aux _mod
+type types_in_scope = (string (* var name *) * string (* type name *)) list
 
-let find_metacall_instantiations _mod desc = 
-    let instantiations = ref [] in
-    (* This will produce erroneous code if objects are passed through several functions. TODO: Fix *)
-    let track_call (call : Parser.function_call) = 
-        let instantiation = List.map (List.nth call.args) desc.meta_param_indices in
-        instantiations := instantiation :: !instantiations in
-    (* This will fail if meta function is called over several layers *)
-    let rec iter_call (call : Parser.function_call) = 
-        if call.name = desc.function_name then 
-            track_call call 
-        else List.iter begin fun value -> match value with | Parser.Call call -> iter_call call | _ -> () end call.args in
-    let find_definition value = 
-        let rec aux definitions name = match definitions with
-        | [] -> failwith "Logic error in find_definition"
-        | (hd : Parser.function_def) :: _ when hd.name = name -> hd
-        | _ :: tl -> aux tl name in
-        match value with
-        | Parser.Variable name -> aux _mod name
-        | _ -> failwith "find_definition on invalid value" in
-    List.iter (fun (mod_statement : Parser.mod_statement) -> List.iter iter_call mod_statement.scope) _mod;
-    desc, List.map (fun inst -> List.map find_definition inst) !instantiations
+let type_for_identifier (scope : types_in_scope) identifier location = 
+    match List.find_opt (fun (var_name, _) -> var_name = identifier) scope with
+    | None -> Error (UnknownIdentifier (identifier, location))
+    | Some (_, type_name) -> Ok (type_name)
 
-let meta_call_transform nth_to_string args (desc : metacall_description) =
-    let name_params = List.map nth_to_string desc.meta_param_indices in
-    let filtered_args = List.filteri (fun i _ -> List.for_all ((<>) i) desc.meta_param_indices) args in
-    desc.function_name ^ "__" ^ (String.concat "_" name_params), filtered_args
+let create_scope (call : checked_function_call) (func : Parser.function_def) = 
+    List.combine (List.map (fun (p : Parser.param_def) -> p.param_name) func.params) (List.map snd call.args)
 
-let instantiate_if_matching metacall_desc instantiations _mod (func : Parser.function_def) =
-    let nth_arg_name (instantiations : (Parser.param_def * Parser.function_def) list) i = 
-        let (param : Parser.param_def) = List.nth func.params i in
-        let rec aux (instantiations : (Parser.param_def * Parser.function_def) list) = match instantiations with
-        | [] -> failwith "Logic error in `instantiate_if_matching:arg_name_for_index`"
-        | hd :: _ when (fst hd).param_name = param.param_name -> (snd hd).name
-        | _ :: tl -> aux tl in
-        aux instantiations in
-    let instantiate instantiation =
-        let def_to_struct_value (def : Parser.function_def) = 
-            Parser.StructInit { struct_name = "Function"; members = ["name", Parser.StringLiteral def.name] } in
-        let meta_param = List.combine (List.map (List.nth func.params) metacall_desc.meta_param_indices) instantiation in
-        let find_and_replace (name : string) =
-            let rec aux params = match params with
-            | [] -> failwith "Logic error in instantiate_if_matching"
-            | (hd : Parser.param_def * Parser.function_def) :: _ when (fst hd).param_name = name -> snd hd
-            | _ :: tl -> aux tl in
-            aux meta_param in
-        let rec replace_value value = match value with
-            | Parser.Meta name -> let def = find_and_replace name in
-                def_to_struct_value def
-            | Parser.MemberAccess (value, name) -> Parser.MemberAccess ((replace_value value), name)
-            | Parser.Call call -> Parser.Call { call with args = List.map replace_value call.args }
-            | value -> value in
-        let replace_call (call : Parser.function_call) = { call with args = List.map replace_value call.args } in
-        let name, params = meta_call_transform (nth_arg_name meta_param) func.params metacall_desc in
-        { 
-            func with name = name; params = params; scope = List.map replace_call func.scope;
-        } in
-    if func.name = metacall_desc.function_name then
-        List.map instantiate instantiations
-    else
-        [func]
+let rec map_result f l = match l with
+| [] -> Ok []
+| hd :: tl -> begin match f hd with
+    | Error err -> Error err
+    | Ok v -> begin match map_result f tl with
+        | Error err -> Error err
+        | Ok l -> Ok (v :: l)
+        end
+    end
 
-let replace_meta_calls_transformer (meta_calls : metacall_description list) (value : Parser.value) =
-    let nth_name (call : Parser.function_call) i = match List.nth call.args i with
-    | Parser.Variable name -> name
-    | _ -> failwith "Unsupported arg value in `replace_meta_calls_transformer`" in
-    let matches meta_call (call : Parser.function_call) = meta_call.function_name = call.name in
-    let rec aux meta_calls call = match meta_calls with
-    | [] -> value
-    | hd :: _ when matches hd call -> let name, args = meta_call_transform (nth_name call) call.args hd in
-        Parser.Call { call with name = name; args=args }
-    | _ :: tl -> aux tl call in
-    match value with
-    | Parser.Call call -> aux meta_calls call
-    | value -> value
+let rec fold_result f acc l = match l with
+| [] -> Ok acc
+| hd :: tl -> begin match f acc hd with
+    | Error err -> Error err
+    | Ok acc -> fold_result f acc tl
+    end
 
-let simplify_struct_access_transformer (value : Parser.value) =
-    let rec aux members name = match members with
-    | [] -> failwith "No such named member in `simplify_struct_access_transformer`"
-    | (n, value) :: _ when n=name -> value
-    | _ :: tl -> aux tl name in
-    match value with
-    | Parser.MemberAccess (Parser.StructInit s, name) -> aux s.members name
-    | value -> value
+(* TODO: Return a list of errors? *)
+(* TODO: This is an unreadable mess. Can I use monads to make this more readable? *)
+let verify_function_calls (_mod : Parser._mod) : (checked_function_call list, error) result= 
+    let find_function_index name = 
+        let aux i (def : Parser.function_def) = if def.name = name then Some (i, def) else None in
+        List.find_mapi aux _mod in
+    let get_type_list (cur_scope : types_in_scope) location (args : Parser.value list) =
+        let aux (value : Parser.value) = match value with
+        | Parser.StringLiteral _ -> Ok "string"
+        | Parser.IntegerLiteral _ -> Ok "int"
+        | Parser.Variable name -> type_for_identifier cur_scope name location
+        | _ -> failwith "Unsupported case in `find_type_for_value`" in
+        map_result aux args in
+    let check_signature_match (cur_scope : types_in_scope) (call : Parser.function_call) (func : Parser.function_def) = 
+        let type_is_valid (arg : type_name) (type_constraint : Parser.type_constraint option) = match arg, type_constraint with
+        | _, None -> true
+        | "string", Some Parser.String -> true
+        | "int", Some Parser.Integer -> true
+        | _, _ -> false in
+        let rec aux i (args : type_name list) (params : Parser.param_def list) = 
+            match args, params with
+            | [], [] -> Ok ()
+            | [], _ :: _ -> Error (ArgumentCountMismatch (call, func))
+            | _ :: _, [] -> Error (ArgumentCountMismatch (call, func))
+            | arg :: args, param :: params -> if type_is_valid arg param.type_constraint then
+                    aux (i+1) args params
+                else
+                    Error (ArgumentTypeMismatch (i, call, func)) in
+        match get_type_list cur_scope call.location call.args with
+        | Error err -> Error err
+        | Ok args -> Result.map (fun () -> args) (aux 1 args func.params) in
+    let rec verify_and_collect_calls 
+        (cur_scope : types_in_scope) 
+        (function_calls : checked_function_call list) 
+        (call : Parser.function_call)
+            : (checked_function_call list, error) result = 
+        let recurse_function_call (call : checked_function_call) (func : Parser.function_def)
+            : (checked_function_call list, error) result = match List.find_opt ((=) call) function_calls with
+            | Some _ -> Ok function_calls
+            | None -> 
+                let scope = create_scope call func in
+                fold_result (verify_and_collect_calls scope) (call :: function_calls) func.scope in
+        match find_function_index call.name with
+        | None -> Error (UnknownFunction call)
+        | Some (index, def) -> begin match check_signature_match cur_scope call def with
+            | Error err -> Error err
+            | Ok type_list -> 
+                let call = { function_index = index; args = List.combine call.args type_list; } in
+                recurse_function_call call def 
+            end in
+    verify_and_collect_calls [] [] { name = "main"; args = []; location = { line = 0; column = 0 } }
 
-let unwrap_meta_calls (_mod : Parser._mod) =
-    let meta_calls = find_metacall_descriptions _mod in
-    let with_instantiations = List.map (find_metacall_instantiations _mod) meta_calls in
-    let insert_instantiation (_mod : Parser._mod) desc instantiations =
-        List.flatten (List.map (instantiate_if_matching desc instantiations _mod) _mod) in
-    let rec aux (_mod : Parser._mod) instantiations = match instantiations with
-    | [] -> _mod
-    | (desc, instantiations) :: tl -> aux (insert_instantiation _mod desc instantiations) tl in
-    let rec transformations _mod transformers = match transformers with
-    | [] -> _mod
-    | hd :: tl -> transformations (transform_value hd _mod) tl in
-    transformations (aux _mod with_instantiations) [
-        (replace_meta_calls_transformer meta_calls);
-        simplify_struct_access_transformer
-    ]
+(* Execute the meta-program and decompile all higher-level language features into a C-compatible version *)
+let unwrap_module (_mod : Parser._mod) = 
+    verify_function_calls _mod
+
 
 let eval_value value = match value with
     | Parser.StringLiteral s -> s
