@@ -55,8 +55,8 @@ let print_module _mod =
     | Call call -> call.name ^ (list_to_string value_to_string call.args)
     | MemberAccess (obj, member) -> (value_to_string obj) ^ "." ^ member
     | StructInit s -> s.struct_name ^ "{ " ^ (list_to_string (fun (name, value) -> name ^ ": " ^ (value_to_string value) ^ "; ") s.members) ^ "}" in
-  let print_call (call : Interpreter.checked_function_call) = 
-    Printf.printf "%d: %s" 
+  let print_call (call : Interpreter.typed_function_call) = 
+    Printf.printf "%d -> %s\n" 
       call.function_index 
       (String.concat ", " (List.map (fun (value, type_name) -> Printf.sprintf "%s: %s" (value_to_string value) type_name) call.args))
     in

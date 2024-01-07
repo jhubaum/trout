@@ -1,102 +1,122 @@
-type error = UnknownFunction of Parser.function_call |
-             ArgumentCountMismatch of (Parser.function_call * Parser.function_def) |
-             ArgumentTypeMismatch of (int * Parser.function_call * Parser.function_def) |
-             UnknownIdentifier of (string * Common.location)
-
-let describe_error _ = 
-    (* TODO: Implement *)
-    print_endline "An error occurred"
-
 type type_name = string
+type variable = { name: string; type_id: type_name }
+type active_scope = variable list
+
 
 (* a function call that calls an existing function with valid arguments *)
-type checked_function_call = {
+type typed_function_call = {
     function_index: int; (* refers to the function_def in the Parser._mod *)
     args: (Parser.value * type_name) list;
 }
 
 type types_in_scope = (string (* var name *) * string (* type name *)) list
 
+type error = UnknownFunction of Parser.function_call |
+            (* Using typed_function_call here isn't very useful. TODO: Replace with Parser.function_call *)
+             ArgumentCountMismatch of (typed_function_call * Parser.function_def) |
+             ArgumentTypeMismatch of (int * typed_function_call * Parser.function_def) |
+             UnknownIdentifier of (string * Common.location) |
+             NoMainFunction
+
+let describe_error error = match error with
+    | UnknownFunction call -> Printf.printf "%s: Unknown function `%s`\n" (Common.string_of_location call.location) call.name 
+    | ArgumentCountMismatch (_, def) -> Printf.printf "Argument count mismatch for call of function `%s`\n" def.name
+    | ArgumentTypeMismatch (_, _, def) -> Printf.printf "Argument type mismatch for call of function `%s`\n" def.name
+    | UnknownIdentifier (name, location) -> Printf.printf "%s: Unknwown identifier %s\n" (Common.string_of_location location) name
+    | NoMainFunction -> print_endline "No main function found\n"
+
 let type_for_identifier (scope : types_in_scope) identifier location = 
     match List.find_opt (fun (var_name, _) -> var_name = identifier) scope with
     | None -> Error (UnknownIdentifier (identifier, location))
     | Some (_, type_name) -> Ok (type_name)
 
-let create_scope (call : checked_function_call) (func : Parser.function_def) = 
-    List.combine (List.map (fun (p : Parser.param_def) -> p.param_name) func.params) (List.map snd call.args)
 
-let rec map_result f l = match l with
+let create_scope (call : typed_function_call) (func : Parser.function_def) = 
+    let aux (arg, (param : Parser.param_def)) = { name = param.param_name; type_id = snd arg; } in
+    List.map aux (List.combine call.args func.params)
+
+(* map a function returning a result to a result list, propagating the first error *)
+(* TODO: Return all errors instead? *)
+let rec list_map_result f l = match l with
 | [] -> Ok []
-| hd :: tl -> begin match f hd with
-    | Error err -> Error err
-    | Ok v -> begin match map_result f tl with
-        | Error err -> Error err
-        | Ok l -> Ok (v :: l)
-        end
+| hd :: tl -> begin match f hd, list_map_result f tl with
+    | Ok hd, Ok tl -> Ok (hd :: tl)
+    | Error err, _ -> Error err
+    | _, Error err -> Error err
     end
 
-let rec fold_result f acc l = match l with
-| [] -> Ok acc
-| hd :: tl -> begin match f acc hd with
-    | Error err -> Error err
-    | Ok acc -> fold_result f acc tl
-    end
+(* TODO: Replace with: instantiate_typed_function_def *)
+let check_typed_function_call (def : Parser.function_def) call =
+    let types_match typed_value (param : Parser.param_def) = match snd typed_value, param.type_constraint with
+    | _, None -> true
+    | "string", Some Parser.String -> true
+    | "int", Some Parser.Integer -> true
+    | _, _ -> false in
+    let rec aux i args (params : Parser.param_def list) = match args, params with
+    | [], [] -> Ok call
+    | [], _ :: _ -> Error (ArgumentCountMismatch (call, def))
+    | _ :: _, [] -> Error (ArgumentCountMismatch (call, def))
+    | arg :: args, param :: params -> if types_match arg param then
+            aux (i+1) args params
+        else
+            Error (ArgumentTypeMismatch (i, call, def)) in
+    aux 0 call.args def.params
 
-(* TODO: Return a list of errors? *)
-(* TODO: This is an unreadable mess. Can I use monads to make this more readable? *)
-let verify_function_calls (_mod : Parser._mod) : (checked_function_call list, error) result= 
-    let find_function_index name = 
-        let aux i (def : Parser.function_def) = if def.name = name then Some (i, def) else None in
-        List.find_mapi aux _mod in
-    let get_type_list (cur_scope : types_in_scope) location (args : Parser.value list) =
-        let aux (value : Parser.value) = match value with
-        | Parser.StringLiteral _ -> Ok "string"
-        | Parser.IntegerLiteral _ -> Ok "int"
-        | Parser.Variable name -> type_for_identifier cur_scope name location
-        | _ -> failwith "Unsupported case in `find_type_for_value`" in
-        map_result aux args in
-    let check_signature_match (cur_scope : types_in_scope) (call : Parser.function_call) (func : Parser.function_def) = 
-        let type_is_valid (arg : type_name) (type_constraint : Parser.type_constraint option) = match arg, type_constraint with
-        | _, None -> true
-        | "string", Some Parser.String -> true
-        | "int", Some Parser.Integer -> true
-        | _, _ -> false in
-        let rec aux i (args : type_name list) (params : Parser.param_def list) = 
-            match args, params with
-            | [], [] -> Ok ()
-            | [], _ :: _ -> Error (ArgumentCountMismatch (call, func))
-            | _ :: _, [] -> Error (ArgumentCountMismatch (call, func))
-            | arg :: args, param :: params -> if type_is_valid arg param.type_constraint then
-                    aux (i+1) args params
-                else
-                    Error (ArgumentTypeMismatch (i, call, func)) in
-        match get_type_list cur_scope call.location call.args with
-        | Error err -> Error err
-        | Ok args -> Result.map (fun () -> args) (aux 1 args func.params) in
-    let rec verify_and_collect_calls 
-        (cur_scope : types_in_scope) 
-        (function_calls : checked_function_call list) 
-        (call : Parser.function_call)
-            : (checked_function_call list, error) result = 
-        let recurse_function_call (call : checked_function_call) (func : Parser.function_def)
-            : (checked_function_call list, error) result = match List.find_opt ((=) call) function_calls with
-            | Some _ -> Ok function_calls
-            | None -> 
-                let scope = create_scope call func in
-                fold_result (verify_and_collect_calls scope) (call :: function_calls) func.scope in
-        match find_function_index call.name with
-        | None -> Error (UnknownFunction call)
-        | Some (index, def) -> begin match check_signature_match cur_scope call def with
-            | Error err -> Error err
-            | Ok type_list -> 
-                let call = { function_index = index; args = List.combine call.args type_list; } in
-                recurse_function_call call def 
-            end in
-    verify_and_collect_calls [] [] { name = "main"; args = []; location = { line = 0; column = 0 } }
+let create_typed_function_call index (def : Parser.function_def) (call : Parser.function_call) scope = 
+    let type_for_identifier name = 
+        Option.to_result ~none:(UnknownIdentifier (name, call.location)) (List.find_opt (fun var -> var.name = name) scope) in
+    let value_with_type (value : Parser.value) = match value with
+    | Parser.StringLiteral _ -> Ok (value, "string")
+    | Parser.IntegerLiteral _ -> Ok (value, "int")
+    | Parser.Variable name -> Result.map (fun var -> value, var.type_id) (type_for_identifier name)
+    | _ -> failwith "Unsupported case in `create_checked_function_call" in
+    match list_map_result value_with_type call.args with
+    | Error err -> Error err
+    | Ok typed_args -> check_typed_function_call def { function_index = index; args = typed_args }
+
+module ModuleBuilder = struct
+    type t = { _mod: Parser._mod; functions: typed_function_call list }
+
+    let create _mod = { _mod = _mod; functions = [] }
+
+    let insert_function t scope (call : Parser.function_call) = 
+        let definitions = List.filter (fun (_, (def : Parser.function_def)) -> def.name = call.name) (List.mapi (fun i def -> i, def) !t._mod) in
+        let return_if_new call = match List.find_opt ((=) call) !t.functions with
+            | None -> t := { !t with functions = call :: !t.functions }; Ok(Some call)
+            | Some _ -> Ok None in
+        let try_insert i def = 
+            let call = create_typed_function_call i def call scope in 
+            Result.join (Result.map return_if_new call) in
+        let map_result_err f res = match res with
+        | Ok res -> Ok res
+        | Error err -> f err in
+        let rec aux definitions err = match definitions with
+        | [] -> Error err
+        | (i, def) :: tl -> map_result_err (fun err -> aux tl err) (try_insert i def) in
+        if call.name = "print" then 
+            Ok None 
+        else aux definitions (UnknownFunction call)
+
+    let get t = t.functions
+end
 
 (* Execute the meta-program and decompile all higher-level language features into a C-compatible version *)
 let unwrap_module (_mod : Parser._mod) = 
-    verify_function_calls _mod
+    let builder = ref (ModuleBuilder.create _mod) in
+    let rec inspect_function scope (func : Parser.function_def) = 
+        let recurse call = match ModuleBuilder.insert_function builder scope call with
+        | Error err -> Error err
+        | Ok (Some call) -> 
+            let def = List.nth _mod call.function_index in
+            inspect_function (create_scope call def) def
+        | v -> v in
+        let rec aux scope = match scope with
+        | [] -> Ok(None)
+        | hd :: tl -> Result.join (Result.map (fun _ -> aux tl) (recurse hd)) in
+        aux func.scope in
+    match List.find_opt (fun (def : Parser.function_def) -> def.name = "main") _mod with
+    | None -> Error NoMainFunction
+    | Some main -> Result.map (fun _ -> ModuleBuilder.get !builder) (inspect_function [] main)
 
 
 let eval_value value = match value with
