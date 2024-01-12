@@ -1,16 +1,47 @@
-fn print_elem(i : int) {
-    print("Integer: ", i);
+fn Allocator(t : type) -> bool {
+    // TODO: Figure out syntax for checking functions
+}
+fn Result(t : type) -> bool {
+    // TODO: Figure out how to implement this also
 }
 
-fn print_elem(s : string) {
-    print("String: ", s);
+// TODO: How can I make this a static association?
+// i.e. that I call it as `Result::map(res, f)` or `res.map(f)`
+fn map(res : Result('t), func: 't -> 'u) -> Result('u) {
+    // TODO: What is the syntax for match expressions on meta types
+    match res {
+        // I like this syntax, but how would this work under the hood?
+        Result('t)::Ok val -> Ok func(val),
+        Result('t)::Err err -> Err err
+    }
 }
 
-fn helper(elem) {
-    print_elem(elem);
+fn unwrap(res : Result('t)) -> 't {
+    match res {
+        Result('t)::Ok val -> val,
+        Result('t)::Err err -> panic("Unwrapped error: ", err)
+    }
 }
+
+native type SystemAllocator;
+// TODO: Use int for size or implement some other data type? uint, usize, u32, ...?
+native fn alloc(_ : SystemAllocator, size : int) -> *void | BadAlloc;
+native fn free(_ : SystemAllocator, ptr: *void);
+
+fn alloc(allocator: Allocator, t : type) -> *t | BadAlloc {
+    // TODO: How does type casting works
+    allocator.alloc(t.size()).map(fn (ptr) -> { ptr as *t })
+}
+
+fn alloc_array(allocator: Allocator, t : type, count : int) -> t[] | BadAlloc {
+    // TODO: How to convert between pointer and array? Does this type cast make sense?
+    // Are arrays maybe just a struct instead of a native language type?
+    allocator.alloc(t.size() * count).map(fn (ptr) -> { ptr as t[count] })
+}
+
+native fn read_line(allocator: Allocator) -> char[] | BadAlloc;
 
 fn main() {
-    helper(3);
-    helper("test");
+    let line = read_line(SystemAllocator).unwrap();
+    print(line);
 }
