@@ -20,6 +20,16 @@ let type_for_identifier (scope : active_scope) identifier location =
     | None -> Error (UnknownIdentifier (identifier, location))
     | Some { type_id;_ } -> Ok (type_id)
 
+let type_of_literal (l : Parser.literal ) = match l with
+| Parser.String _ -> "string"
+| Parser.Integer _ -> "int"
+| Parser.Bool _ -> "bool"
+
+let print_literal (l : Parser.literal option) = match l with
+| Some Parser.String s -> print_string s
+| Some Parser.Integer i -> print_int i
+| Some Parser.Bool b -> if b then print_string "true" else print_string "false"
+| None -> failwith "Tried to print None"
 
 let create_scope (func : Parser.function_def) arg_types = 
     let aux (arg, (param : Parser.param_def)) = { name = param.param_name; type_id = arg; } in
@@ -35,6 +45,30 @@ let rec map_result_list f l = match l with
     | _, Error err -> Error err
     end
 
+let rec iter_result_list f l = match l with
+| [] -> Ok ()
+| hd :: tl -> match f hd with
+    | Error err -> Error err
+    | Ok () -> iter_result_list f tl
+
+(* Return an error if no function matches. If a template function matches, return its definition if it needs to be instantiated and None otherwise*)
+let find_matching_function (_mod : Parser._mod) (call : Parser.function_call) arg_types = 
+    let matches_definition (def : Parser.function_def) = 
+        let rec fulfils_type_constraint type_id (type_constraint : Parser.type_constraint) = match type_constraint with
+        | Parser.TypeId name -> type_id = name
+        | Parser.SumType constraints -> List.exists (fulfils_type_constraint type_id) constraints in
+        let aux ((param : Parser.param_def), type_id) =  match param.type_constraint with
+        | Some c -> fulfils_type_constraint type_id c
+        | None -> true in
+        try
+            def.name = call.name && List.for_all aux (List.combine def.params arg_types)
+        with
+            | Invalid_argument _ -> false in
+    match List.find_opt matches_definition _mod with
+    | None -> Error (UnknownFunction (call.name, call.location))
+    | Some def -> Ok def
+
+(*
 module TypeCheckedAST = struct
     type function_call = {
         name: string;
@@ -50,33 +84,6 @@ module TypeCheckedAST = struct
     type builder = { _mod: Parser._mod; functions: function_def list }
 
     let create_builder _mod = { _mod = _mod; functions = [] }
-
-    (* Return an error if no function matches. If a template function matches, return its definition if it needs to be instantiated and None otherwise*)
-    let find_matching_function t name location arg_types = 
-        let matches_instantiation (def : function_def) = 
-            let aux ({type_id;_}, arg_type) = type_id = arg_type in
-            try
-                def.name = name && List.for_all aux (List.combine def.params arg_types)
-            with
-                | Invalid_argument _ -> false in
-        let matches_definition (def : Parser.function_def) = 
-            let rec fulfils_type_constraint type_id (type_constraint : Parser.type_constraint) = match type_constraint with
-            | Parser.TypeId name -> type_id = name
-            | Parser.SumType constraints -> List.exists (fulfils_type_constraint type_id) constraints in
-            let aux ((param : Parser.param_def), type_id) =  match param.type_constraint with
-            | Some c -> fulfils_type_constraint type_id c
-            | None -> true in
-            try
-                def.name = name && List.for_all aux (List.combine def.params arg_types)
-            with
-                | Invalid_argument _ -> false in
-        let aux = match List.find_opt matches_instantiation t.functions with
-        | Some _ -> Ok None
-        | None -> begin match List.find_opt matches_definition t._mod with
-            | None -> Error (UnknownFunction (name, location))
-            | Some def -> Ok (Some def)
-            end in
-        if name = "print" then Ok None else aux
 
     let rec convert_function t (def: Parser.function_def) arg_types = 
         let params = create_scope def arg_types in
@@ -172,4 +179,86 @@ let unwrap_module (_mod : Parser._mod) =
     let conversion_result = map_result_list convert_non_template_function _mod in
     Result.map (fun _ -> TypeCheckedAST.get !builder) conversion_result
 
-let run _mod = failwith "Not yet implemented"
+*)
+
+let unwrap_module _ = failwith "Needs some fixing"
+module TypeCheckedAST = struct
+    let print _ = failwith "Needs some fixing"
+end
+
+
+module ModuleInterpreter = struct
+    (* TODO: Start using a new struct instead of variable that also covers void (e.g for function calls)
+    and contains the type *)
+    type variable = string * Parser.literal
+    type scope = variable list
+    type t = { _mod: Parser._mod; scope_stack: scope list }
+
+    let create _mod = { _mod = _mod; scope_stack = [] }
+
+    let scope_val t name = List.find_opt (fun (n, _) -> n = name) (List.hd t.scope_stack)
+
+    let type_of_value t location (value : Parser.value) = match value with 
+    | Parser.Literal l -> Ok(type_of_literal l)
+    | Parser.Variable name -> Option.to_result ~none:(UnknownIdentifier (name, location)) (Option.map (fun (_, l) -> type_of_literal l) (scope_val t name))
+    | _ -> failwith "Not implemented case in ModuleInterpreter::type_of_value"
+
+    let insert_variable t name value = 
+        let rec replace variables = match variables with
+        | [] -> [name, value]
+        | (n, _) :: tl when n = name -> (name, value) :: tl
+        | _ :: tl -> replace tl in
+        let replace_in_stack stack = match stack with
+        | [] -> failwith "logic error in insert_variable"
+        | hd :: tl -> (replace hd) :: tl in
+        { t with scope_stack = replace_in_stack t.scope_stack }
+ 
+    let rec eval_value t location (value : Parser.value) = match value with
+    | Parser.Literal l -> Ok (Some l)
+    | Parser.Variable name -> Option.to_result ~none:(UnknownIdentifier (name, location)) (Option.map (fun (_, l) -> Some l) (scope_val t name))
+    | Parser.Call call -> eval_function_call t call
+    | _ -> failwith "Not implemented case in ModuleInterpreter::type_of_value"
+    and push_scope t (def : Parser.function_def) (call : Parser.function_call) = 
+        let aux ((param : Parser.param_def), (value : Parser.value)) = 
+            let value = eval_value t call.location value in
+            (* Unwrapping result here because we've done a type check earlier already if this function is called correctly *)
+            param.param_name, Option.get (Result.get_ok value) in
+        let scope = List.map aux (List.combine def.params call.args) in
+        { t with scope_stack = scope :: t.scope_stack }
+    and eval_function_call t (call : Parser.function_call) =
+        let eval_function (def : Parser.function_def) (call : Parser.function_call) = 
+            let t = push_scope t def call in
+            let aux (statement : Parser.statement) = match statement with
+            | Parser.FunctionCall call -> eval_function_call t call
+            | Parser.Match match_statement -> eval_match_statement t match_statement in
+            Result.map (fun _ -> None) (map_result_list aux def.scope) in
+        match call.name with
+        | "print" -> Result.map (fun _ -> print_newline (); None) (iter_result_list (print_value t call.location) call.args)
+        | _ -> 
+            let arg_types = map_result_list (type_of_value t call.location) call.args in
+            match Result.join (Result.map (find_matching_function t._mod call) arg_types) with
+            | Error err -> Error err
+            | Ok def -> eval_function def call
+    and eval_match_statement t match_statement = 
+        match type_of_value t match_statement.match_location match_statement.on_value with
+        | Error err -> Error err
+        | Ok type_id ->
+            let row = List.find_opt (fun (row : Parser.match_statement_row) -> row.matched_type = type_id) match_statement.rows in
+            (* TODO: Check beforehand that match expression covers all types *)
+            match row with
+            | None -> failwith "match expression didn't cover value"
+            | Some row ->
+                let value = Result.get_ok (eval_value t match_statement.match_location match_statement.on_value) in
+                let t = insert_variable t row.identifier (Option.get value) in
+                eval_value t match_statement.match_location (row.value)
+    and print_value t location value = 
+        let value = eval_value t location value in
+        Result.map (fun value -> print_literal value) value
+end
+
+let run _mod = 
+    let interpreter = ModuleInterpreter.create _mod in
+    let res = ModuleInterpreter.eval_function_call interpreter { name="main"; args = []; location={line=0; column=0}} in
+    match res with
+    | Ok _ -> ()
+    | Error err -> describe_error err
