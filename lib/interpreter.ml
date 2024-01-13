@@ -40,7 +40,7 @@ module TypeCheckedAST = struct
         name: string;
         args: (Parser.value * type_name) list;
     }
-    type statement = function_call
+    type statement = FunctionCall of function_call | Match of Parser.match_statement
 
     type function_def = {
         name: string;
@@ -81,8 +81,11 @@ module TypeCheckedAST = struct
     let rec convert_function t (def: Parser.function_def) arg_types = 
         let params = create_scope def arg_types in
         let type_of_value location (value : Parser.value) = match value with
-        | Parser.StringLiteral _ -> Ok "string"
-        | Parser.IntegerLiteral _ -> Ok "int"
+        | Parser.Literal l -> Ok begin match l with
+            | Parser.String _ -> "string"
+            | Parser.Integer _ -> "int"
+            | Parser.Bool _ -> "bool"
+            end
         | Parser.Variable name -> type_for_identifier params name location
         | _ -> failwith "unsupported case in `type_of_value`" in
         let convert_call (call : Parser.function_call) = 
@@ -94,8 +97,12 @@ module TypeCheckedAST = struct
             match map_result_list (type_of_value call.location) call.args with
             | Error err -> Error err
             | Ok arg_types -> check_definition arg_types in
+        let convert_statement (statement : Parser.statement) = match statement with
+        | Parser.FunctionCall call -> Result.map (fun call -> FunctionCall call) (convert_call call)
+        (* TODO: How should this be actually handeled? *)
+        | Parser.Match m -> Ok (Match m) in
         (* TODO: Make sure that function has not already been inserted *)
-        match map_result_list convert_call def.scope with
+        match map_result_list convert_statement def.scope with
         | Error err -> Error err
         | Ok scope -> t := { !t with functions = { name = def.name; params = params; scope = scope } :: !t.functions }; Ok()
 
@@ -112,9 +119,16 @@ module TypeCheckedAST = struct
         | [x] -> elem_to_string x
         | x::xs -> (elem_to_string x) ^ ", " ^ (aux xs) in
         "(" ^ (aux list) ^ ")" in
-      let rec value_to_string value = match value with
-        | Parser.StringLiteral s -> "\"" ^ String.escaped s ^ "\""
-        | Parser.IntegerLiteral i -> string_of_int i
+      let literal_to_string (l: Parser.literal) = match l with
+      | Parser.String s -> "\"" ^ String.escaped s ^ "\""
+      | Parser.Integer i -> string_of_int i
+      | Parser.Bool b -> string_of_bool b in
+      let rec match_statement_to_string (match_statement: Parser.match_statement) = 
+          "match " ^ (value_to_string match_statement.on_value)
+      and value_to_string value = match value with
+        | Parser.Literal l -> literal_to_string l
+        (* TODO: Implement proper print statement *)
+        | Parser.MatchStatement m -> match_statement_to_string m
         | Parser.Variable v -> v
         | Parser.Meta value -> "meta(" ^ value ^ ")"
         | Parser.Call call -> call.name ^ (list_to_string value_to_string call.args)
@@ -128,10 +142,13 @@ module TypeCheckedAST = struct
                 String.concat ", " (List.map (fun (value, _) -> value_to_string value) call.args);
                 ")";
             ] in
+        let print_statement indent statement = match statement with
+        | Match m -> print_endline (match_statement_to_string m)
+        | FunctionCall call -> print_call indent call in
         let print_function (func : function_def) = 
             let string_of_var (var : variable) = Printf.sprintf "%s: %s" var.name var.type_id in
             Printf.printf "%s (%s) {\n" func.name (String.concat ", " (List.map string_of_var func.params));
-            List.iter (print_call 4) func.scope;
+            List.iter (print_statement 4) func.scope;
             print_endline "}\n\n" in
         List.iter print_function _mod
 end
@@ -140,7 +157,10 @@ end
 let unwrap_module (_mod : Parser._mod) = 
     let builder = ref (TypeCheckedAST.create_builder _mod) in
     let types_for_non_template_function (func: Parser.function_def) = 
-        let is_template_param (param: Parser.param_def) = Option.is_none param.type_constraint in
+        let is_template_param (param: Parser.param_def) = match param.type_constraint with
+        | None -> true
+        | Some (Parser.SumType _) -> true
+        | _ -> false in 
         let get_type (param: Parser.param_def) = match Option.get param.type_constraint with 
         | Parser.TypeId name -> name
         | Parser.SumType _ -> failwith "Sum type in types_for_non_template_function" in
@@ -152,15 +172,4 @@ let unwrap_module (_mod : Parser._mod) =
     let conversion_result = map_result_list convert_non_template_function _mod in
     Result.map (fun _ -> TypeCheckedAST.get !builder) conversion_result
 
-let eval_value value = match value with
-    | Parser.StringLiteral s -> s
-    | _ -> failwith "Not implemented"
-
-let rec eval_func (_mod : Parser._mod) name args =  match name with
-    | "print" -> List.iter (fun value -> print_string @@ eval_value value) args
-    | func -> match List.find_opt (fun (def : Parser.mod_statement) -> def.name = func) _mod with
-        | Some func -> List.iter (fun (call : Parser.function_call) -> eval_func _mod call.name call.args) func.scope
-        | None -> failwith ("Function " ^ func ^ " not found")
-
-
-let run _mod = eval_func _mod "main" []
+let run _mod = failwith "Not yet implemented"

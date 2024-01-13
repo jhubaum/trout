@@ -1,19 +1,23 @@
 open Common;;
 open Tokenizer;;
 
+type literal = String of string | Integer of int | Bool of bool
+
 type value = 
-    StringLiteral of string | 
-    IntegerLiteral of int |
+    Literal of literal |
     Variable of string |
     Meta of string |
     Call of function_call | 
     (* TODO: Implement parsing for this *)
     StructInit of struct_init |
-    MemberAccess of value * string
+    MemberAccess of value * string |
+    MatchStatement of match_statement
 and function_call = { name: string; args: value list; location: location }
 and struct_init = { struct_name: string; members: (string * value) list; }
+and match_statement = { match_location: location; on_value: value; rows: match_statement_row list }
+and match_statement_row = { (*row_location: location; *) matched_type: string; identifier: string; value: value }
 
-type statement = function_call
+type statement = FunctionCall of function_call | Match of match_statement
 
 type type_constraint = TypeId of string | SumType of (type_constraint list)
 type param_def = { param_name: string; type_constraint: type_constraint option }
@@ -89,8 +93,10 @@ let rec parse_value tokens =
         end
     | _ -> value, tokens in
     match skip_whitespace tokens with
-    | {token=String name; _} :: tl -> StringLiteral name, tl
-    | {token=Integer i; _} :: tl -> IntegerLiteral i, tl
+    | {token=String name; _} :: tl -> Literal (String name), tl
+    | {token=Integer i; _} :: tl -> Literal (Integer i), tl
+    | {token=Identifier "false"; _} :: tl -> Literal (Bool false), tl
+    | {token=Identifier "true"; _} :: tl -> Literal (Bool true), tl
     | {token=Identifier "meta"; location} :: tl ->
         let args, tokens = parse_list tl parse_identifier in
         if List.length args <> 1 then
@@ -113,8 +119,6 @@ let parse_type_constraint tokens =
         | tokens -> if (List.length type_constraints) = 0 then type_constraint, tokens else SumType (type_constraint :: type_constraints), tokens in
     aux [] tokens
 
-
-
 let parse_param tokens = 
     let name, tokens = parse_identifier tokens in
     match skip_whitespace tokens with
@@ -123,11 +127,40 @@ let parse_param tokens =
         { param_name=name; type_constraint = Some type_constraint}, tokens
     | _ -> { param_name=name; type_constraint = None }, tokens
 
+
+
+let parse_match_statement location tokens = 
+    let parse_match_row tokens = 
+        let type_id, tokens = parse_identifier tokens in
+        let name, tokens = parse_identifier tokens in
+        match skip_whitespace tokens with
+        | {token=ArrowRight;_} :: tl -> 
+                let value, tokens = parse_value tl in
+                { matched_type = type_id; identifier=name; value=value }, tokens
+        | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+        | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
+    let parse_scope tokens = 
+        let rec aux tokens = match skip_whitespace tokens with
+        | {token=Comma;_} :: tl -> aux tl
+        | {token=CurlyR;_} :: tl -> [], tl
+        | tokens -> 
+                let row, tokens = parse_match_row tokens in 
+                let rows, tokens = aux tokens in
+                row :: rows, tokens in
+        match skip_whitespace tokens with
+        | {token=CurlyL;_} :: tl -> aux tl
+        | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
+        | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
+    let value, tokens = parse_value tokens in
+    let rows, tokens = parse_scope tokens in
+    Match { match_location=location; on_value=value; rows=rows }, tokens
+
 let parse_scope tokens = 
     let tokens = match_or_fail CurlyL tokens in
         let parse_function_call tokens = match skip_whitespace tokens with
+        | {token=Identifier "match";location=location} :: tl -> parse_match_statement location tl
         | {token=Identifier name;location=location} :: tl -> let args, tokens = parse_list tl parse_value in
-            { name = name; args = args; location = location }, tokens
+            FunctionCall { name = name; args = args; location = location }, tokens
         | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
         | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
     let rec aux scope tokens = match skip_whitespace tokens with
