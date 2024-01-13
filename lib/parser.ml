@@ -15,7 +15,7 @@ and struct_init = { struct_name: string; members: (string * value) list; }
 
 type statement = function_call
 
-type type_constraint = String | Integer
+type type_constraint = TypeId of string | SumType of (type_constraint list)
 type param_def = { param_name: string; type_constraint: type_constraint option }
 type function_def = { name: string; scope: statement list; location: location; params: param_def list}
 
@@ -101,12 +101,21 @@ let rec parse_value tokens =
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
 
-let parse_param tokens = 
-    let parse_type_constraint tokens = match skip_whitespace tokens with
-    | {token=Identifier "int";_} :: tl -> Integer, tl
-    | {token=Identifier "string";_} :: tl -> String, tl
+let parse_type_constraint tokens = 
+    let parse_type_id tokens = match skip_whitespace tokens with
+    | {token=Identifier name;_} :: tl -> (TypeId name), tl
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile in
+    let rec aux type_constraints tokens = 
+        let type_constraint, tokens = parse_type_id tokens in
+        match skip_whitespace tokens with
+        | {token=Bar;_} :: tl -> aux (type_constraint :: type_constraints) tl
+        | tokens -> if (List.length type_constraints) = 0 then type_constraint, tokens else SumType (type_constraint :: type_constraints), tokens in
+    aux [] tokens
+
+
+
+let parse_param tokens = 
     let name, tokens = parse_identifier tokens in
     match skip_whitespace tokens with
     | {token=Colon;_} :: tl -> 

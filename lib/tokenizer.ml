@@ -19,6 +19,7 @@ type token =
     | EndMultilineComment
     | ForwardSlash
     | Asterix
+    | Bar
     | UnknownChar of char (* used if we encounter a char without special meaning *)
 
 let string_of_token token = match token with
@@ -41,8 +42,9 @@ let string_of_token token = match token with
     | StartMultilineComment -> "StartMultilineComment"
     | EndMultilineComment -> "EndMultilineComment"
     | ForwardSlash -> "ForwardSlash"
-    | UnknownChar c -> Printf.sprintf "UnknownChar %c" c
     | Asterix -> "Asterix"
+    | Bar -> "Bar"
+    | UnknownChar c -> Printf.sprintf "UnknownChar %c" c
 
 type located_token = {
     token : token;
@@ -138,6 +140,7 @@ let next_token iterator =
     | Some '}' -> Some (Ok CurlyR)
     | Some ',' -> Some (Ok Comma)
     | Some '.' -> Some (Ok Dot)
+    | Some '|' -> Some (Ok Bar)
     | Some '-' -> begin match CharIterator.peek !iterator with
         | Some '>' -> let _ = CharIterator.pop iterator in Some (Ok ArrowRight)
         | _ -> Some (Ok Minus)

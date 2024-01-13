@@ -1,5 +1,7 @@
+/*
 fn Allocator(t : type) -> bool {
     // TODO: Figure out syntax for checking functions
+    /* ... */
 }
 fn Result(t : type) -> bool {
     // TODO: Figure out how to implement this also
@@ -44,4 +46,17 @@ native fn read_line(allocator: Allocator) -> char[] | BadAlloc;
 fn main() {
     let line = read_line(SystemAllocator).unwrap();
     print(line);
+}
+*/
+
+fn receive_sum_type(val : int | bool) {
+    match val {
+        int i -> print("Got integer ", i),
+        bool b -> print("Got boolean ", b)
+    };
+}
+
+fn main() {
+    receive_sum_type(5);
+    receive_sum_type(false);
 }

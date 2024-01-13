@@ -60,11 +60,12 @@ module TypeCheckedAST = struct
             with
                 | Invalid_argument _ -> false in
         let matches_definition (def : Parser.function_def) = 
-            let aux ((param : Parser.param_def), type_id) =  match type_id, param.type_constraint with
-            | _, None -> true
-            | "string", Some Parser.String -> true
-            | "int", Some Parser.Integer -> true
-            | _, _ -> false in
+            let rec fulfils_type_constraint type_id (type_constraint : Parser.type_constraint) = match type_constraint with
+            | Parser.TypeId name -> type_id = name
+            | Parser.SumType constraints -> List.exists (fulfils_type_constraint type_id) constraints in
+            let aux ((param : Parser.param_def), type_id) =  match param.type_constraint with
+            | Some c -> fulfils_type_constraint type_id c
+            | None -> true in
             try
                 def.name = name && List.for_all aux (List.combine def.params arg_types)
             with
@@ -141,8 +142,8 @@ let unwrap_module (_mod : Parser._mod) =
     let types_for_non_template_function (func: Parser.function_def) = 
         let is_template_param (param: Parser.param_def) = Option.is_none param.type_constraint in
         let get_type (param: Parser.param_def) = match Option.get param.type_constraint with 
-        | Parser.String -> "string"
-        | Parser.Integer -> "int" in
+        | Parser.TypeId name -> name
+        | Parser.SumType _ -> failwith "Sum type in types_for_non_template_function" in
         if List.exists is_template_param func.params then None
         else Some (List.map get_type func.params) in
     let convert_non_template_function (func: Parser.function_def) = match types_for_non_template_function func with
