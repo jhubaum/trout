@@ -136,6 +136,24 @@ let parse_function tokens = match skip_whitespace tokens with
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd)
     | [] -> raise @@ InternalParserError UnexpectedEndOfFile
 
+let skip_comments tokens = 
+    let rec skip_singleline_comment tokens = match tokens with
+    | [] -> []
+    | {token=EOL;_} :: tl -> tl
+    | _ :: tl -> skip_singleline_comment tl in
+    let rec aux depth tokens = match tokens with
+        | [] -> Ok []
+        | {token=StartMultilineComment;_} :: tl -> aux (depth+1) tl
+        | {token=StartSingleLineComment;_} :: tl -> aux depth (skip_singleline_comment tl)
+        | {token=EndMultilineComment;_} as hd :: tl -> 
+                if depth = 0 
+                then Error (UnexpectedToken hd) 
+                else aux (depth-1) tl
+        | hd :: tl -> begin match aux depth tl with
+            | Error err -> Error err
+            | Ok tokens -> if depth = 0 then Ok (hd :: tokens) else Ok (tokens)
+            end in
+    aux 0 tokens
 
 let parse_module tokens = 
     let rec aux tokens = match skip_whitespace tokens with
@@ -143,9 +161,11 @@ let parse_module tokens =
     | {token=Identifier "fn";_} :: tl -> let func, tokens =  parse_function tl in
         func :: aux tokens
     | hd :: _ -> raise @@ InternalParserError (UnexpectedToken hd) in
-    try Ok (aux tokens) with
-    | InternalParserError e -> Error e
-
+    match skip_comments tokens with
+    | Error err -> Error err
+    | Ok tokens -> begin try Ok (aux tokens) with
+        | InternalParserError e -> Error e
+        end
 
 let parse_file filename = match tokenize_file filename with
     | Ok tokens -> parse_module tokens

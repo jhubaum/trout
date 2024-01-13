@@ -12,6 +12,14 @@ type token =
     | Comma
     | Dot
     | Colon
+    | ArrowRight
+    | Minus
+    | StartSingleLineComment
+    | StartMultilineComment
+    | EndMultilineComment
+    | ForwardSlash
+    | Asterix
+    | UnknownChar of char (* used if we encounter a char without special meaning *)
 
 let string_of_token token = match token with
     | Identifier id -> Printf.sprintf "Identifier[%s]" id
@@ -27,6 +35,14 @@ let string_of_token token = match token with
     | Comma -> "Comma"
     | Dot -> "Dot"
     | Colon -> "Colon"
+    | ArrowRight -> "ArrowRight"
+    | Minus -> "Minus"
+    | StartSingleLineComment -> "StartSingleLineComment"
+    | StartMultilineComment -> "StartMultilineComment"
+    | EndMultilineComment -> "EndMultilineComment"
+    | ForwardSlash -> "ForwardSlash"
+    | UnknownChar c -> Printf.sprintf "UnknownChar %c" c
+    | Asterix -> "Asterix"
 
 type located_token = {
     token : token;
@@ -37,12 +53,10 @@ let string_of_located_token { token = token; location = loc } =
     Printf.sprintf "%d,%d: %s" loc.line loc.column (string_of_token token) 
 
 type token_error = 
-    | UnknownChar of string * Common.location
     | UnknownEscapedChar of string * Common.location
     | UnfinishedString of Common.location
 
 let describe_token_error error = match error with
-    | UnknownChar (s, loc) -> Printf.printf "%d,%d: Unknown char '%s'\n" loc.line loc.column s
     | UnknownEscapedChar (s, loc) -> Printf.printf "%d,%d: Unknown escaped character '%s'\n" loc.line loc.column s
     | UnfinishedString loc -> Printf.printf "%d,%d: Unfinished string\n" loc.line loc.column
 
@@ -124,7 +138,20 @@ let next_token iterator =
     | Some '}' -> Some (Ok CurlyR)
     | Some ',' -> Some (Ok Comma)
     | Some '.' -> Some (Ok Dot)
-    | Some c -> Some (Error (UnknownChar (String.make 1 c, location))) in
+    | Some '-' -> begin match CharIterator.peek !iterator with
+        | Some '>' -> let _ = CharIterator.pop iterator in Some (Ok ArrowRight)
+        | _ -> Some (Ok Minus)
+        end
+    | Some '/' -> begin match CharIterator.peek !iterator with
+        | Some '/' -> let _ = CharIterator.pop iterator in Some (Ok StartSingleLineComment)
+        | Some '*' -> let _ = CharIterator.pop iterator in Some (Ok StartMultilineComment)
+        | _ -> Some (Ok ForwardSlash)
+        end
+    | Some '*' -> begin match CharIterator.peek !iterator with
+        | Some '/' -> let _ = CharIterator.pop iterator in Some (Ok EndMultilineComment)
+        | _ -> Some (Ok Asterix)
+        end
+    | Some c -> Some (Ok (UnknownChar c)) in
     match token with
     | None -> None
     | Some (Ok tok) -> Some (Ok { location = location; token = tok })
